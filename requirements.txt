@@ -1,0 +1,34 @@
+# Traffic Sign Recognition - Dependencies
+# Optimized for Python 3.14 compatibility
+
+# PyTorch & Vision (core)
+torch>=2.0.0
+torchvision>=0.15.0
+timm>=0.9.0
+
+# Data Processing (compatible versions)
+albumentations>=1.3.0
+Pillow>=9.5.0
+pandas>=2.0.0
+numpy>=1.26.0
+
+# ML Utilities
+scikit-learn>=1.2.0
+optuna>=3.0.0
+
+# Calibration (optional - install separately if issues)
+# netcal>=1.3.0
+
+# Experiment Tracking
+wandb>=0.15.0
+
+# Visualization
+matplotlib>=3.8.0
+seaborn>=0.13.0
+tqdm>=4.65.0
+
+# Configuration
+PyYAML>=6.0
+
+# Testing
+pytest>=7.3.0

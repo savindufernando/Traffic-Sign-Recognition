@@ -1,0 +1,71 @@
+# Traffic Sign Recognition Configuration
+
+# Dataset
+dataset:
+  path: "C:/Users/ASUS/.cache/kagglehub/datasets/meowmeowmeowmeowmeow/gtsrb-german-traffic-sign/versions/1"
+  num_classes: 43
+  image_size: 224
+  val_split: 0.2
+
+# Model Architecture
+model:
+  backbone: "convnext_tiny"  # convnext_tiny, efficientnet_b0, resnet34
+  backbone_pretrained: true
+  transformer_layers: 2
+  transformer_heads: 8
+  transformer_dim: 384
+  dropout: 0.2
+  use_attention: true  # SE-Block attention
+
+# Training
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 5
+  label_smoothing: 0.1
+  focal_loss_gamma: 2.0
+  use_amp: true  # Mixed precision
+
+# Cross-Validation
+cross_validation:
+  enabled: false
+  n_folds: 5
+  
+# Augmentation
+augmentation:
+  motion_blur_prob: 0.3
+  weather_prob: 0.2
+  occlusion_prob: 0.3
+  affine_prob: 0.5
+  brightness_contrast_prob: 0.4
+
+# Calibration
+calibration:
+  enabled: true
+  method: "temperature_scaling"
+
+# Uncertainty
+uncertainty:
+  mc_dropout_samples: 30
+  
+# OOD Detection  
+ood_detection:
+  enabled: true
+  energy_temperature: 1.0
+
+# Paths
+paths:
+  models_dir: "models"
+  outputs_dir: "outputs"
+  logs_dir: "logs"
+
+# Reproducibility
+seed: 42
+
+# Logging
+wandb:
+  enabled: false
+  project: "traffic-sign-recognition"
+  entity: null

@@ -1,0 +1,12 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Jupyter checkpoints
+**/.ipynb_checkpoints/
+
+# Model weights (large)
+notebooks/models/*.pth
+
+# Local scratch files
+testwrite-root.txt
