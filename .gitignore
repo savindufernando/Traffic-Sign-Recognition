@@ -10,3 +10,6 @@ notebooks/models/*.pth
 
 # Local scratch files
 testwrite-root.txt
+
+# Synthetic Data (Generated Images & Labels)
+sri_lankan_traffc_signs/synthetic/
