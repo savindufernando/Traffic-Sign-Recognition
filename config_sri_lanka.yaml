@@ -1,0 +1,52 @@
+# Traffic Sign Recognition Configuration - Sri Lanka Dataset
+
+# Dataset
+dataset:
+  path: "d:/APIIT/FYP/Traffic-Sign-Recognition/sri_lankan_traffc_signs/synthetic"
+  num_classes: 122
+  image_size: 224
+  val_split: 0.15  # Matches generator split
+
+# Model Architecture
+model:
+  backbone: "convnext_tiny"
+  backbone_pretrained: true
+  transformer_layers: 2
+  transformer_heads: 8
+  transformer_dim: 384
+  dropout: 0.2
+  use_attention: true
+
+# Training
+training:
+  batch_size: 32
+  epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 5
+  label_smoothing: 0.1
+  focal_loss_gamma: 2.0
+  use_amp: true
+
+# Cross-Validation
+cross_validation:
+  enabled: false
+  
+# Augmentation
+augmentation:
+  motion_blur_prob: 0.3
+  weather_prob: 0.2
+  occlusion_prob: 0.3
+  affine_prob: 0.5
+  brightness_contrast_prob: 0.4
+
+# Paths
+paths:
+  models_dir: "models_sri_lanka"
+  outputs_dir: "outputs_sri_lanka"
+  logs_dir: "logs_sri_lanka"
+
+seed: 42
+
+wandb:
+  enabled: false

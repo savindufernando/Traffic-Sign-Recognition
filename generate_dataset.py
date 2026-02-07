@@ -139,6 +139,11 @@ Note:
         action="store_true",
         help="Disable sign pole rendering"
     )
+    parser.add_argument(
+        "--exhaustive", "-e",
+        action="store_true",
+        help="Generate every sign with every background (guarantees coverage)"
+    )
     
     # Split ratios
     parser.add_argument(
@@ -239,7 +244,8 @@ def main():
     stats = generator.generate_dataset(
         n_per_template=n_per_template,
         include_hard_negatives=not args.no_hard_negatives and not args.preview,
-        hard_negative_ratio=args.hard_negative_ratio
+        hard_negative_ratio=args.hard_negative_ratio,
+        exhaustive_mode=args.exhaustive
     )
     
     print(f"\n✓ Generated {stats['total_generated']} images")

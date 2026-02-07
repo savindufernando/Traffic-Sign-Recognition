@@ -154,11 +154,8 @@ def main():
     
     # Resume from checkpoint if specified
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        logger.info(f"Resumed from checkpoint: {args.resume}")
+        start_epoch = trainer.load_checkpoint(args.resume)
+        logger.info(f"Resumed from checkpoint: {args.resume} (next epoch {start_epoch + 1})")
     
     # Train
     print("\n" + "="*60)

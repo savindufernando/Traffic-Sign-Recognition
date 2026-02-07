@@ -33,3 +33,7 @@ PyYAML>=6.0
 
 # Testing
 pytest>=7.3.0
+
+# GUI
+PySide6>=6.5.0
+pyqtgraph>=0.13.0

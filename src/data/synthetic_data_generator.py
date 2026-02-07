@@ -201,15 +201,15 @@ class DepthScaleManager:
             (int(self.image_width * 0.55), self.image_width)  # Widen right zone
         ]
         y_min = int(self.vanishing_point_y)
-        # Reduced from 0.85 to 0.65 to avoid placing signs on the dashboard/hood
-        y_max = int(self.image_height * 0.65)
+        y_max = int(self.image_height * 0.85)
         
         return x_zones, y_min, y_max
 
     def get_y_range_for_scale(
         self, 
         min_scale_factor: float, 
-        max_scale_factor: float
+        max_scale_factor: float,
+        base_scale: float = 0.15
     ) -> Tuple[int, int]:
         """
         Calculate valid Y range for a given range of scale factors.
@@ -219,12 +219,21 @@ class DepthScaleManager:
         MODEL_MIN = 0.3
         MODEL_MAX = 1.5
         
+        # Adjust requested range by base_scale to match internal model scales
+        # internal_scale * base_scale = final_scale
+        # So: internal_scale = final_scale / base_scale
+        req_min_internal = min_scale_factor / base_scale
+        req_max_internal = max_scale_factor / base_scale
+        
         # Clip requested range to model capabilities
-        target_min = max(MODEL_MIN, min_scale_factor)
-        target_max = min(MODEL_MAX, max_scale_factor)
+        target_min = max(MODEL_MIN, req_min_internal)
+        target_max = min(MODEL_MAX, req_max_internal)
         
         if target_min > target_max:
-            return self.vanishing_point_y, self.vanishing_point_y
+            # If the required scale is simply not possible (e.g. too small or too big)
+            # We return the closest possible single point (usually vanishing point or bottom)
+            # But let's return vanishing point as safe default
+            return int(self.vanishing_point_y), int(self.vanishing_point_y)
             
         # Formula: scale_factor = 0.3 + (dist / max_dist) * 1.2
         # Inverse: dist = ((scale_factor - 0.3) / 1.2) * max_dist
@@ -237,6 +246,13 @@ class DepthScaleManager:
         y_start = int(self.vanishing_point_y + dist_min)
         y_end = int(self.vanishing_point_y + dist_max)
         
+        # Ensure correct ordering and bounds
+        y_start = max(int(self.vanishing_point_y), y_start)
+        y_end = min(self.image_height, y_end)
+        
+        if y_start > y_end:
+            y_start, y_end = y_end, y_start
+            
         return y_start, y_end
 
 
@@ -461,8 +477,10 @@ class RealismFilter:
         size_ratio = sign_area / image_area
         
         if size_ratio < self.min_sign_size:
+            # print(f"REJECTED: Too small {size_ratio:.4f} < {self.min_sign_size}")
             return False, "sign_too_small"
         if size_ratio > self.max_sign_size:
+            # print(f"REJECTED: Too large {size_ratio:.4f} > {self.max_sign_size}")
             return False, "sign_too_large"
         
         # Check 2: Sign not in sky (upper 20% of image - relaxed for dashcam views)
@@ -483,6 +501,7 @@ class RealismFilter:
         contrast_ratio = max(sign_mean, bg_mean) / (min(sign_mean, bg_mean) + 1e-6)
         
         if contrast_ratio < self.min_contrast_ratio:
+            # print(f"REJECTED: Low Contrast {contrast_ratio:.2f} < {self.min_contrast_ratio} (Sign: {sign_mean:.1f}, BG: {bg_mean:.1f})")
             return False, "low_contrast"
         
         return True, "valid"
@@ -1310,7 +1329,8 @@ class SyntheticDataGenerator:
         sign_aspect = template.shape[1] / template.shape[0]
         
         # scale = sqrt(ratio * img_aspect / sign_aspect)
-        min_req = np.sqrt(self.realism_filter.min_sign_size * img_aspect / sign_aspect)
+        # Add 10% safety margin to min_req to avoid rejection due to integer truncation
+        min_req = np.sqrt(self.realism_filter.min_sign_size * img_aspect / sign_aspect) * 1.1
         max_req = np.sqrt(self.realism_filter.max_sign_size * img_aspect / sign_aspect)
         
         y_opt_min, y_opt_max = depth_manager.get_y_range_for_scale(min_req, max_req)
@@ -1405,15 +1425,17 @@ class SyntheticDataGenerator:
         self,
         n_per_template: int = 100,
         include_hard_negatives: bool = True,
-        hard_negative_ratio: float = 0.1
+        hard_negative_ratio: float = 0.1,
+        exhaustive_mode: bool = False
     ) -> Dict[str, Any]:
         """
         Generate complete synthetic dataset.
         
         Args:
-            n_per_template: Number of variations per template
+            n_per_template: Number of variations per template (ignored if exhaustive_mode=True)
             include_hard_negatives: Generate hard negative samples
             hard_negative_ratio: Ratio of hard negatives to positives
+            exhaustive_mode: If True, generate every template with every background
             
         Returns:
             Statistics dictionary
@@ -1429,7 +1451,19 @@ class SyntheticDataGenerator:
         total_templates = sum(len(t) for t in templates.values())
         total_backgrounds = sum(len(b) for b in backgrounds.values())
         
-        logger.info(f"Starting generation: {total_templates} templates × {n_per_template} variations")
+        # Prepare background list
+        all_backgrounds = []
+        for folder, paths in backgrounds.items():
+            for p in paths:
+                all_backgrounds.append((folder, p))
+                
+        if exhaustive_mode:
+            logger.info(f"Starting EXHAUSTIVE generation: {total_templates} templates × {len(all_backgrounds)} backgrounds")
+            total_expected = total_templates * len(all_backgrounds)
+        else:
+            logger.info(f"Starting RANDOM generation: {total_templates} templates × {n_per_template} variations")
+            total_expected = total_templates * n_per_template
+            
         logger.info(f"Using {total_backgrounds} background images")
         
         stats = {
@@ -1439,20 +1473,22 @@ class SyntheticDataGenerator:
             "per_category": {}
         }
         
-        all_backgrounds = []
-        for folder, paths in backgrounds.items():
-            for p in paths:
-                all_backgrounds.append((folder, p))
-        
         image_idx = 0
         
         for category, template_list in templates.items():
             category_count = 0
             
             for template_path in template_list:
-                for var_idx in range(n_per_template):
-                    # Select random background
-                    bg_folder, bg_path = random.choice(all_backgrounds)
+                
+                # Determine targets (backgrounds)
+                if exhaustive_mode:
+                    # Use every background exactly once
+                    targets = all_backgrounds
+                else:
+                    # Random sampling
+                    targets = [random.choice(all_backgrounds) for _ in range(n_per_template)]
+                
+                for var_idx, (bg_folder, bg_path) in enumerate(targets):
                     
                     # Generate
                     result = self.generate_single(

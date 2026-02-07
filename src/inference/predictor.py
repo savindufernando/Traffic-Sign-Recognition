@@ -74,8 +74,34 @@ class TrafficSignPredictor:
         # Transform
         self.transform = get_val_transforms(self.image_size)
         
-        # Class names
-        self.class_names = GTSRB_CLASSES
+        # Class names - load from dataset
+        dataset_path = config.get('dataset', {}).get('path', '')
+        num_classes = config.get('dataset', {}).get('num_classes', 122)
+        self.class_names = self._load_class_names(dataset_path, num_classes)
+    
+    def _load_class_names(self, dataset_path: str, num_classes: int) -> list:
+        """Load class names from dataset classes.txt file."""
+        from pathlib import Path
+        
+        # Try to find classes.txt in various locations
+        possible_paths = [
+            Path(dataset_path) / "labels_yolo" / "classes.txt",
+            Path(dataset_path) / "classes.txt",
+            Path("sri_lankan_traffc_signs/synthetic/labels_yolo/classes.txt"),
+            Path("d:/APIIT/FYP/Traffic-Sign-Recognition/sri_lankan_traffc_signs/synthetic/labels_yolo/classes.txt"),
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                with open(path, 'r') as f:
+                    classes = [line.strip() for line in f if line.strip()]
+                if len(classes) >= num_classes:
+                    print(f"Loaded {len(classes)} class names from {path}")
+                    return classes
+        
+        # Fallback: generate generic class names
+        print(f"Warning: Could not find classes.txt, using generic class names")
+        return [f"Class_{i}" for i in range(num_classes)]
     
     def _load_weights(self, model_path: Union[str, Path]):
         """Load model weights from checkpoint or state dict."""

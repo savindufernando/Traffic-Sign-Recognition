@@ -19,6 +19,7 @@ from .transforms import get_train_transforms, get_val_transforms
 
 
 # Traffic sign class names (GTSRB)
+# Default GTSRB classes (fallback)
 GTSRB_CLASSES = [
     "Speed limit (20km/h)", "Speed limit (30km/h)", "Speed limit (50km/h)",
     "Speed limit (60km/h)", "Speed limit (70km/h)", "Speed limit (80km/h)",
@@ -37,6 +38,27 @@ GTSRB_CLASSES = [
     "Roundabout mandatory", "End of no passing",
     "End of no passing by vehicles over 3.5 metric tons"
 ]
+
+def load_class_names(data_dir: Path) -> List[str]:
+    """Load class names from classes.txt if available, else use default."""
+    names_file = data_dir / "classes.txt"
+    if names_file.exists():
+        with open(names_file, 'r') as f:
+            return [line.strip() for line in f.readlines() if line.strip()]
+    
+    # Try dataset.yaml (YOLO format)
+    yaml_file = data_dir / "dataset.yaml"
+    if yaml_file.exists():
+        import yaml
+        try:
+            with open(yaml_file, 'r') as f:
+                data = yaml.safe_load(f)
+                if 'names' in data:
+                    return list(data['names'].values())
+        except Exception:
+            pass
+            
+    return GTSRB_CLASSES
 
 
 class GTSRBDataset(Dataset):
@@ -70,7 +92,9 @@ class GTSRBDataset(Dataset):
         
         # Compute class weights for imbalance handling
         self.class_counts = Counter(self.labels)
-        self.num_classes = len(GTSRB_CLASSES)
+        # Load class names dynamically
+        self.classes = load_class_names(self.data_dir)
+        self.num_classes = len(self.classes)
         
     def __len__(self) -> int:
         return len(self.image_paths)
@@ -107,10 +131,11 @@ class GTSRBDataset(Dataset):
         sample_weights = [class_weights[label].item() for label in self.labels]
         return sample_weights
     
-    @staticmethod
-    def get_class_name(class_id: int) -> str:
+    def get_class_name(self, class_id: int) -> str:
         """Get human-readable class name."""
-        return GTSRB_CLASSES[class_id]
+        if 0 <= class_id < len(self.classes):
+            return self.classes[class_id]
+        return str(class_id)
 
 
 def get_dataloaders(

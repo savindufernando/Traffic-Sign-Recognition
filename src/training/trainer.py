@@ -138,6 +138,9 @@ class Trainer:
             'val_f1': [],
             'lr': []
         }
+
+        # Resume support
+        self.start_epoch = 0
     
     def train_epoch(self, epoch: int) -> Tuple[float, float]:
         """Train for one epoch."""
@@ -230,8 +233,18 @@ class Trainer:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'best_val_acc': self.best_val_acc,
+            'best_epoch': self.best_epoch,
+            'history': self.history,
+            'early_stopping': {
+                'best_score': self.early_stopping.best_score,
+                'counter': self.early_stopping.counter,
+                'should_stop': self.early_stopping.should_stop
+            },
             'config': self.config
         }
+
+        if self.scaler is not None:
+            checkpoint['scaler_state_dict'] = self.scaler.state_dict()
         
         # Save latest
         torch.save(checkpoint, self.models_dir / 'latest_checkpoint.pth')
@@ -241,6 +254,41 @@ class Trainer:
             torch.save(checkpoint, self.models_dir / 'best_model.pth')
             # Also save just model weights for easier loading
             torch.save(self.model.state_dict(), self.models_dir / 'best_model_weights.pth')
+
+    def load_checkpoint(self, checkpoint_path: str) -> int:
+        """Load model checkpoint and return the next epoch to run."""
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+        if self.scaler is not None and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
+        self.best_val_acc = checkpoint.get('best_val_acc', self.best_val_acc)
+        self.best_epoch = checkpoint.get('best_epoch', checkpoint.get('epoch', self.best_epoch))
+
+        if 'history' in checkpoint and isinstance(checkpoint['history'], dict):
+            self.history = checkpoint['history']
+
+        early_state = checkpoint.get('early_stopping')
+        if isinstance(early_state, dict):
+            self.early_stopping.best_score = early_state.get('best_score', self.early_stopping.best_score)
+            self.early_stopping.counter = early_state.get('counter', self.early_stopping.counter)
+            self.early_stopping.should_stop = early_state.get('should_stop', self.early_stopping.should_stop)
+        elif self.best_val_acc:
+            self.early_stopping.best_score = self.best_val_acc
+            self.early_stopping.counter = 0
+            self.early_stopping.should_stop = False
+
+        last_epoch = int(checkpoint.get('epoch', -1))
+        self.start_epoch = max(0, last_epoch + 1)
+        return self.start_epoch
     
     def train(self) -> Dict:
         """
@@ -256,7 +304,16 @@ class Trainer:
         
         start_time = time.time()
         
-        for epoch in range(self.epochs):
+        if self.start_epoch >= self.epochs:
+            logger.info(
+                f"Checkpoint epoch {self.start_epoch} is already at or beyond total epochs {self.epochs}."
+            )
+            return self.history
+
+        if self.start_epoch > 0:
+            logger.info(f"Resuming from epoch {self.start_epoch + 1}/{self.epochs}")
+
+        for epoch in range(self.start_epoch, self.epochs):
             epoch_start = time.time()
             
             # Training
