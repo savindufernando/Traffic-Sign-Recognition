@@ -12,7 +12,7 @@ import base64
 import io
 from PIL import Image
 
-from predictor_service import predictor_service
+from backend.predictor_service import predictor_service
 
 # FastAPI App
 app = FastAPI(
@@ -24,7 +24,7 @@ app = FastAPI(
 # CORS - Allow React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
