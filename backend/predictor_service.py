@@ -43,7 +43,7 @@ class PredictorService:
             
             print(f"Loading model from: {model_path}")
             self._predictor = load_predictor(str(model_path), str(config_path))
-            print("✅ Model loaded successfully!")
+            print("Model loaded successfully!")
             
         except Exception as e:
             print(f"❌ Failed to load model: {e}")
