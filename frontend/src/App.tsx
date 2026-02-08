@@ -16,7 +16,7 @@ interface PredictionResult {
   top_k: TopKPrediction[];
 }
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'http://localhost:8001';
 
 function App() {
   const [image, setImage] = useState<string | null>(null);
