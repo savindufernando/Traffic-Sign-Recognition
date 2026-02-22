@@ -3,14 +3,19 @@ Traffic Sign Recognition - FastAPI Backend.
 REST API for traffic sign prediction.
 """
 
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent / ".env")
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import base64
 import io
 from PIL import Image
+
+from backend.security import apply_security
 
 from backend.predictor_service import predictor_service
 
@@ -21,14 +26,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS - Allow React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Security: API key auth, CORS, rate limiting, security headers
+apply_security(app, module_name="tsr")
 
 
 # Response Models
