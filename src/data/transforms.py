@@ -130,6 +130,22 @@ def _get_albumentations_train_transforms(
         
         A.GaussNoise(var_limit=(5.0, 30.0), p=0.2),
         
+        # Real-world conditions for Sri Lankan roads
+        A.RandomRain(slant_lower=-10, slant_upper=10, drop_length=20,
+                     drop_width=1, blur_value=3, p=0.15),
+        A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, p=0.1),
+        A.RandomSunFlare(flare_roi=(0, 0, 1, 0.5), p=0.1),
+        
+        # Partial occlusion (tree branches, stickers, dirt)
+        A.CoarseDropout(max_holes=3, max_height=40, max_width=40,
+                        min_height=10, min_width=10, fill_value=0, p=0.2),
+        
+        # Adaptive histogram equalization (poor lighting, shadows)
+        A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.2),
+        
+        # Viewing angle variation
+        A.Perspective(scale=(0.05, 0.1), p=0.3),
+        
         A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ToTensorV2(),
     ])
