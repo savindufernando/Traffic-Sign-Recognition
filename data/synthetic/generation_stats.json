@@ -1,0 +1,20 @@
+{
+  "total_generated": 19696,
+  "rejected": 8304,
+  "hard_negatives": 1969,
+  "per_category": {
+    "warning_signs": 6964,
+    "prohibitory_signs": 4756,
+    "mandatory_signs": 1468,
+    "restrictive_signs": 1852,
+    "priority_signs": 1098,
+    "traffic_light_signals": 552,
+    "other_signs": 2851,
+    "light_signals_for_pedestrians": 155
+  },
+  "per_distance_bucket": {
+    "far": 1652,
+    "medium": 10126,
+    "near": 7918
+  }
+}
