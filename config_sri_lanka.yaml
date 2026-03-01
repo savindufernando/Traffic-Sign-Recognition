@@ -14,15 +14,15 @@ model:
   transformer_layers: 2
   transformer_heads: 8
   transformer_dim: 384
-  dropout: 0.2
+  dropout: 0.3           # was: 0.2 — stronger regularization
   use_attention: true
 
 # Training
 training:
   batch_size: 32
-  epochs: 50
+  epochs: 100             # was: 50 — more room for scheduler cycles
   learning_rate: 1.0e-4
-  weight_decay: 1.0e-4
+  weight_decay: 5.0e-4    # was: 1e-4 — stronger L2 regularization
   warmup_epochs: 5
   label_smoothing: 0.1
   focal_loss_gamma: 2.0
@@ -34,9 +34,9 @@ cross_validation:
   
 # Augmentation
 augmentation:
-  motion_blur_prob: 0.3
-  weather_prob: 0.2
-  occlusion_prob: 0.3
+  motion_blur_prob: 0.35   # was: 0.3
+  weather_prob: 0.25       # was: 0.2
+  occlusion_prob: 0.35     # was: 0.3
   affine_prob: 0.5
   brightness_contrast_prob: 0.4
 
@@ -50,3 +50,4 @@ seed: 42
 
 wandb:
   enabled: false
+
