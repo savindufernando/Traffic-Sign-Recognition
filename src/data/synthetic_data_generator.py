@@ -77,6 +77,21 @@ class TimeOfDay(Enum):
     NIGHT = "night"
 
 
+class DistanceBucket(Enum):
+    """Distance bucket for multi-scale sign generation."""
+    FAR = "far"        # Small signs near vanishing point (scale 0.03-0.07)
+    MEDIUM = "medium"  # Mid-range signs (scale 0.07-0.15)
+    NEAR = "near"      # Large signs close to camera (scale 0.15-0.30)
+
+
+# Distance bucket distribution for stratified sampling
+DISTANCE_BUCKET_CONFIG = {
+    DistanceBucket.FAR:    {"weight": 0.30, "scale_range": (0.03, 0.07)},
+    DistanceBucket.MEDIUM: {"weight": 0.40, "scale_range": (0.07, 0.15)},
+    DistanceBucket.NEAR:   {"weight": 0.30, "scale_range": (0.15, 0.30)},
+}
+
+
 @dataclass
 class SignCategory:
     """Mapping of sign categories to appropriate road contexts."""
@@ -156,8 +171,8 @@ class DepthScaleManager:
     def __init__(self, image_height: int, image_width: int):
         self.image_height = image_height
         self.image_width = image_width
-        # Vanishing point typically at horizon (upper third of image)
-        self.vanishing_point_y = image_height * 0.35
+        # Vanishing point at horizon (upper 30% — more realistic)
+        self.vanishing_point_y = image_height * 0.30
         
     def get_scale_for_position(
         self, 
@@ -201,7 +216,7 @@ class DepthScaleManager:
             (int(self.image_width * 0.55), self.image_width)  # Widen right zone
         ]
         y_min = int(self.vanishing_point_y)
-        y_max = int(self.image_height * 0.85)
+        y_max = int(self.image_height * 0.95)  # Extended: allow very near signs
         
         return x_zones, y_min, y_max
 
@@ -254,6 +269,40 @@ class DepthScaleManager:
             y_start, y_end = y_end, y_start
             
         return y_start, y_end
+    
+    def get_position_for_bucket(
+        self,
+        bucket: 'DistanceBucket',
+        base_scale: float = 0.15
+    ) -> Tuple[int, float]:
+        """
+        Get a random Y position and scale for a given distance bucket.
+        
+        Args:
+            bucket: DistanceBucket (FAR, MEDIUM, NEAR)
+            base_scale: Base scale factor
+            
+        Returns:
+            (y_position, scale)
+        """
+        config = DISTANCE_BUCKET_CONFIG[bucket]
+        min_scale, max_scale = config['scale_range']
+        
+        # Pick a random scale within the bucket range
+        target_scale = np.random.uniform(min_scale, max_scale)
+        
+        # Inverse mapping: find Y position that produces this scale
+        # scale = base_scale * scale_factor
+        # scale_factor = 0.3 + (dist / max_dist) * 1.2
+        target_factor = target_scale / base_scale
+        target_factor = np.clip(target_factor, 0.3, 1.5)
+        
+        max_dist = self.image_height - self.vanishing_point_y
+        dist = ((target_factor - 0.3) / 1.2) * max_dist
+        y = int(self.vanishing_point_y + dist)
+        y = np.clip(y, int(self.vanishing_point_y), int(self.image_height * 0.95))
+        
+        return int(y), target_scale
 
 
 # =============================================================================
@@ -448,9 +497,9 @@ class RealismFilter:
     
     def __init__(
         self,
-        min_sign_size: float = 0.01,  # Reduced: allow smaller signs (1% of image)
-        max_sign_size: float = 0.5,   # Increased: allow larger signs
-        min_contrast_ratio: float = 1.1  # Reduced: be less strict about contrast
+        min_sign_size: float = 0.002,  # Relaxed: allow very small distant signs (0.2% of image)
+        max_sign_size: float = 0.5,    # Allow larger signs
+        min_contrast_ratio: float = 1.05  # Relaxed: be less strict about contrast
     ):
         self.min_sign_size = min_sign_size
         self.max_sign_size = max_sign_size
@@ -1019,6 +1068,214 @@ class ColorMatcher:
 
 
 # =============================================================================
+# SIGN DEGRADATION EFFECTS (TSR-PRO-3)
+# =============================================================================
+
+class SignDegradation:
+    """
+    Simulates physical degradation of traffic signs.
+    Real-world signs in Sri Lanka suffer from rust, dirt, sun fading, and wear.
+    """
+    
+    def __init__(self, seed: Optional[int] = None):
+        if seed is not None:
+            np.random.seed(seed)
+    
+    def apply_rust(self, sign: np.ndarray, intensity: float = 0.3) -> np.ndarray:
+        """
+        Add rust-colored patches to the sign.
+        Simulates metal corrosion common in tropical climates.
+        """
+        if sign.shape[2] == 4:
+            alpha = sign[:, :, 3:4]
+            bgr = sign[:, :, :3].copy()
+        else:
+            alpha = None
+            bgr = sign.copy()
+        
+        h, w = bgr.shape[:2]
+        
+        # Create organic rust patches using Perlin-like noise
+        noise = np.random.rand(h // 4, w // 4).astype(np.float32)
+        noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_CUBIC)
+        noise = cv2.GaussianBlur(noise, (15, 15), 0)
+        
+        # Threshold to create patches
+        rust_mask = (noise > (1.0 - intensity)).astype(np.float32)
+        rust_mask = cv2.GaussianBlur(rust_mask, (7, 7), 0)
+        
+        # Rust color (brownish-orange)
+        rust_color = np.array([30, 80, 160], dtype=np.float32)  # BGR
+        rust_layer = np.ones_like(bgr, dtype=np.float32) * rust_color
+        
+        # Blend
+        rust_mask_3d = rust_mask[:, :, np.newaxis]
+        bgr = (bgr.astype(np.float32) * (1 - rust_mask_3d * 0.7) + 
+               rust_layer * rust_mask_3d * 0.7).astype(np.uint8)
+        
+        if alpha is not None:
+            return np.concatenate([bgr, alpha], axis=2)
+        return bgr
+    
+    def apply_dirt(self, sign: np.ndarray, intensity: float = 0.2) -> np.ndarray:
+        """
+        Add dirt/mud splatter to the sign face.
+        Common on roadside signs, especially in rainy seasons.
+        """
+        if sign.shape[2] == 4:
+            alpha = sign[:, :, 3:4]
+            bgr = sign[:, :, :3].copy()
+        else:
+            alpha = None
+            bgr = sign.copy()
+        
+        h, w = bgr.shape[:2]
+        
+        # Create dirt spots
+        dirt_mask = np.zeros((h, w), dtype=np.float32)
+        n_spots = int(h * w * intensity * 0.001)
+        
+        for _ in range(n_spots):
+            cx = np.random.randint(0, w)
+            cy = np.random.randint(0, h)
+            radius = np.random.randint(2, max(3, min(h, w) // 10))
+            cv2.circle(dirt_mask, (cx, cy), radius, 1.0, -1)
+        
+        dirt_mask = cv2.GaussianBlur(dirt_mask, (5, 5), 0)
+        dirt_mask = np.clip(dirt_mask, 0, 1)
+        
+        # Dirt color (dark brown)
+        dirt_color = np.array([40, 60, 70], dtype=np.float32)  # BGR
+        dirt_layer = np.ones_like(bgr, dtype=np.float32) * dirt_color
+        
+        dirt_mask_3d = dirt_mask[:, :, np.newaxis]
+        bgr = (bgr.astype(np.float32) * (1 - dirt_mask_3d * 0.6) + 
+               dirt_layer * dirt_mask_3d * 0.6).astype(np.uint8)
+        
+        if alpha is not None:
+            return np.concatenate([bgr, alpha], axis=2)
+        return bgr
+    
+    def apply_sun_fading(self, sign: np.ndarray, intensity: float = 0.4) -> np.ndarray:
+        """
+        Desaturate and lighten sign colors to simulate sun bleaching.
+        Tropical UV exposure fades signs dramatically over time.
+        """
+        if sign.shape[2] == 4:
+            alpha = sign[:, :, 3:4]
+            bgr = sign[:, :, :3].copy()
+        else:
+            alpha = None
+            bgr = sign.copy()
+        
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        
+        # Desaturate
+        hsv[:, :, 1] *= (1.0 - intensity * 0.6)
+        # Lighten slightly (sun-bleached)
+        hsv[:, :, 2] = np.clip(hsv[:, :, 2] * (1.0 + intensity * 0.2), 0, 255)
+        
+        bgr = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+        
+        if alpha is not None:
+            return np.concatenate([bgr, alpha], axis=2)
+        return bgr
+    
+    def apply_random_degradation(self, sign: np.ndarray) -> Tuple[np.ndarray, List[str]]:
+        """
+        Randomly apply one or more degradation effects.
+        
+        Returns:
+            (degraded_sign, list_of_effects_applied)
+        """
+        effects = []
+        
+        if np.random.rand() < 0.15:
+            sign = self.apply_rust(sign, np.random.uniform(0.1, 0.4))
+            effects.append("rust")
+        
+        if np.random.rand() < 0.20:
+            sign = self.apply_dirt(sign, np.random.uniform(0.1, 0.3))
+            effects.append("dirt")
+        
+        if np.random.rand() < 0.15:
+            sign = self.apply_sun_fading(sign, np.random.uniform(0.2, 0.5))
+            effects.append("sun_fading")
+        
+        return sign, effects
+
+
+# =============================================================================
+# SPECULAR REFLECTION (TSR-PRO-4)
+# =============================================================================
+
+class SpecularReflection:
+    """
+    Simulates headlight specular reflection on retroreflective sign surfaces.
+    Critical for night-time sign recognition accuracy.
+    """
+    
+    def __init__(self, seed: Optional[int] = None):
+        if seed is not None:
+            np.random.seed(seed)
+    
+    def apply_headlight_glare(
+        self,
+        composite: np.ndarray,
+        sign_bbox: Tuple[int, int, int, int],
+        intensity: float = 0.5
+    ) -> np.ndarray:
+        """
+        Add specular highlight on the sign face simulating car headlights.
+        
+        Args:
+            composite: Full composite image with sign
+            sign_bbox: (x, y, w, h) of the sign
+            intensity: Glare intensity (0-1)
+            
+        Returns:
+            Image with specular highlight
+        """
+        x, y, w, h = sign_bbox
+        output = composite.copy()
+        img_h, img_w = output.shape[:2]
+        
+        # Ensure bbox is within image bounds
+        x = max(0, min(x, img_w - 1))
+        y = max(0, min(y, img_h - 1))
+        w = min(w, img_w - x)
+        h = min(h, img_h - y)
+        
+        if w <= 0 or h <= 0:
+            return output
+        
+        # Create an elliptical glare centered on the sign
+        glare_cx = w // 2 + np.random.randint(-w // 4, w // 4 + 1)
+        glare_cy = h // 2 + np.random.randint(-h // 4, h // 4 + 1)
+        
+        glare_rx = int(w * np.random.uniform(0.3, 0.6))
+        glare_ry = int(h * np.random.uniform(0.3, 0.6))
+        
+        # Create glare mask on the sign ROI
+        Y, X = np.ogrid[:h, :w]
+        dist = ((X - glare_cx) / max(1, glare_rx)) ** 2 + \
+               ((Y - glare_cy) / max(1, glare_ry)) ** 2
+        glare_mask = np.clip(1.0 - dist, 0, 1) ** 2  # Soft falloff
+        glare_mask *= intensity
+        
+        # Glare color: bright white with slight blue tint (headlight LED)
+        glare_color = np.array([240, 250, 255], dtype=np.float32)  # BGR
+        
+        # Apply to sign region
+        roi = output[y:y+h, x:x+w].astype(np.float32)
+        glare_3d = glare_mask[:, :, np.newaxis]
+        roi = roi * (1 - glare_3d * 0.4) + glare_color * glare_3d * 0.6
+        output[y:y+h, x:x+w] = np.clip(roi, 0, 255).astype(np.uint8)
+        
+        return output
+
+
+# =============================================================================
 # SYNTHETIC AUGMENTOR
 # =============================================================================
 
@@ -1129,10 +1386,12 @@ class SyntheticAugmentor:
     def augment(
         self,
         image: np.ndarray,
-        weather: WeatherCondition = WeatherCondition.CLEAR
+        weather: WeatherCondition = WeatherCondition.CLEAR,
+        distance_bucket: Optional['DistanceBucket'] = None
     ) -> Tuple[np.ndarray, List[str]]:
         """
         Apply augmentations to image.
+        Distance-aware: far signs get more blur, near signs get more detail.
         
         Returns:
             (augmented_image, list_of_applied_augmentations)
@@ -1152,13 +1411,26 @@ class SyntheticAugmentor:
         elif weather == WeatherCondition.HARSH_SUN:
             image = self.sl_effects.apply_tropical_sun(image)
             applied.append("tropical_sun")
+        
+        # Distance-aware motion effects
+        # Far signs: higher probability of blur (atmosphere + distance)
+        if distance_bucket == DistanceBucket.FAR:
+            blur_prob = 0.45
+            shake_prob = 0.25
+        elif distance_bucket == DistanceBucket.MEDIUM:
+            blur_prob = 0.20
+            shake_prob = 0.15
+        else:
+            blur_prob = 0.10
+            shake_prob = 0.10
             
-        # Apply motion effects randomly
-        if np.random.rand() < 0.2:
-            image = self.apply_motion_blur(image, np.random.randint(3, 7))
+        # Apply motion effects with distance-aware probabilities
+        if np.random.rand() < blur_prob:
+            strength = np.random.randint(3, 9) if distance_bucket == DistanceBucket.FAR else np.random.randint(3, 7)
+            image = self.apply_motion_blur(image, strength)
             applied.append("motion_blur")
             
-        if np.random.rand() < 0.15:
+        if np.random.rand() < shake_prob:
             image = self.apply_camera_shake(image)
             applied.append("camera_shake")
             
@@ -1210,10 +1482,14 @@ class SyntheticDataGenerator:
         self.augmentor = SyntheticAugmentor(seed)
         self.hard_neg_gen = HardNegativeGenerator(seed)
         
-        # NEW: Enhancement components
+        # Enhancement components
         self.pole_renderer = SignPoleRenderer()
         self.bg_fixer = WhiteBackgroundFixer()
         self.color_matcher = ColorMatcher()
+        
+        # PRO enhancement components
+        self.sign_degradation = SignDegradation(seed)
+        self.specular_reflection = SpecularReflection(seed)
         
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1295,11 +1571,19 @@ class SyntheticDataGenerator:
         template_path: Path,
         background_path: Path,
         category: str,
-        variation_idx: int
+        variation_idx: int,
+        distance_bucket: Optional[DistanceBucket] = None
     ) -> Optional[Tuple[np.ndarray, ImageMetadata]]:
         """
-        Generate a single synthetic image.
+        Generate a single synthetic image with multi-scale support.
         
+        Args:
+            template_path: Path to sign template PNG
+            background_path: Path to background image
+            category: Sign category name
+            variation_idx: Variation index for seed offset
+            distance_bucket: If set, forces a specific distance scale
+            
         Returns:
             (image, metadata) or None if rejected
         """
@@ -1311,11 +1595,14 @@ class SyntheticDataGenerator:
             logger.warning(f"Failed to load: {template_path} or {background_path}")
             return None
             
-        # NEW: Fix white background and ensure alpha channel
+        # Fix white background and ensure alpha channel
         template = self.bg_fixer.ensure_alpha(template)
         
-        # NEW: Match sign colors to background lighting
+        # Match sign colors to background lighting
         template = self.color_matcher.match_sign_to_background(template, background)
+        
+        # PRO-3: Apply physical degradation to the template (before compositing)
+        template, degradation_effects = self.sign_degradation.apply_random_degradation(template)
             
         # Get depth/scale manager
         bg_h, bg_w = background.shape[:2]
@@ -1324,40 +1611,41 @@ class SyntheticDataGenerator:
         # Get valid placement zones
         x_zones, y_min_global, y_max_global = depth_manager.get_valid_placement_zone()
         
-        # Optimize Y selection to satisfy realism filter (sign size)
-        img_aspect = bg_w / bg_h
-        sign_aspect = template.shape[1] / template.shape[0]
+        # --- Multi-Scale Distance Bucket Logic ---
+        if distance_bucket is not None:
+            # Use bucket-guided position and scale
+            y, scale = depth_manager.get_position_for_bucket(distance_bucket)
+            # Add slight random variation
+            scale *= np.random.uniform(0.85, 1.15)
+            bucket_cfg = DISTANCE_BUCKET_CONFIG[distance_bucket]
+            scale = np.clip(scale, bucket_cfg['scale_range'][0], bucket_cfg['scale_range'][1])
+        else:
+            # Legacy: random position and depth-based scale
+            img_aspect = bg_w / bg_h
+            sign_aspect = template.shape[1] / template.shape[0]
+            
+            min_req = np.sqrt(self.realism_filter.min_sign_size * img_aspect / sign_aspect) * 1.1
+            max_req = np.sqrt(self.realism_filter.max_sign_size * img_aspect / sign_aspect)
+            
+            y_opt_min, y_opt_max = depth_manager.get_y_range_for_scale(min_req, max_req)
+            
+            y_min = max(y_min_global, y_opt_min)
+            y_max = min(y_max_global, y_opt_max)
+            
+            if y_min >= y_max:
+                 y_min = y_min_global
+                 y_max = y_max_global
+            
+            y = np.random.randint(y_min, y_max)
+            scale = depth_manager.get_scale_for_position(y)
+            scale *= np.random.uniform(0.8, 1.2)
+            scale = np.clip(scale, 0.03, 0.30)
         
-        # scale = sqrt(ratio * img_aspect / sign_aspect)
-        # Add 10% safety margin to min_req to avoid rejection due to integer truncation
-        min_req = np.sqrt(self.realism_filter.min_sign_size * img_aspect / sign_aspect) * 1.1
-        max_req = np.sqrt(self.realism_filter.max_sign_size * img_aspect / sign_aspect)
-        
-        y_opt_min, y_opt_max = depth_manager.get_y_range_for_scale(min_req, max_req)
-        
-        # Intersect with global constraints
-        y_min = max(y_min_global, y_opt_min)
-        y_max = min(y_max_global, y_opt_max)
-        
-        if y_min >= y_max:
-             # Fallback
-             y_min = y_min_global
-             y_max = y_max_global
-        
-        # Random position
+        # Random X position
         x_zone = random.choice(x_zones)
         x = np.random.randint(x_zone[0], x_zone[1])
-        y = np.random.randint(y_min, y_max)
-        
-        # Get depth-appropriate scale
-        scale = depth_manager.get_scale_for_position(y)
-        
-        # Add some random variation to scale
-        scale *= np.random.uniform(0.8, 1.2)
-        scale = np.clip(scale, 0.05, 0.3)
         
         # Composite
-        # Increased perspective probability (was 0.7)
         apply_perspective = np.random.rand() < 0.9
         light_direction = np.random.uniform(0, np.pi)
         
@@ -1370,10 +1658,8 @@ class SyntheticDataGenerator:
             light_direction
         )
         
-        # NEW: Add sign pole for realism (70% chance)
-        # NEW: Add sign pole for realism (Always add unless configured otherwise)
-        if True:  # Changed from 0.7 probability to always based on user feedback
-            composite = self.pole_renderer.add_pole(composite, bbox)
+        # Add sign pole for realism
+        composite = self.pole_renderer.add_pole(composite, bbox)
         
         # Check realism
         is_valid, reason = self.realism_filter.check_composition(
@@ -1381,15 +1667,27 @@ class SyntheticDataGenerator:
         )
         
         if not is_valid:
-            logger.debug(f"Rejected: {reason}")
+            logger.debug(f"Rejected: {reason} (bucket={distance_bucket})")
             return None
-            
-        # Get weather condition from background folder
+        
+        # PRO-4: Apply specular reflection for night scenes
         bg_folder = background_path.parent.name
         weather = self._get_weather_from_folder(bg_folder)
         
-        # Apply augmentations
-        augmented, augs_applied = self.augmentor.augment(composite, weather)
+        if "night" in bg_folder.lower() and np.random.rand() < 0.6:
+            intensity = np.random.uniform(0.3, 0.7)
+            composite = self.specular_reflection.apply_headlight_glare(
+                composite, bbox, intensity
+            )
+            degradation_effects.append("headlight_glare")
+        
+        # Apply augmentations (distance-aware)
+        augmented, augs_applied = self.augmentor.augment(
+            composite, weather, distance_bucket
+        )
+        
+        # Combine all effects for metadata
+        all_effects = degradation_effects + augs_applied
         
         # Create metadata
         metadata = ImageMetadata(
@@ -1401,7 +1699,7 @@ class SyntheticDataGenerator:
             sign_position=(x, y),
             sign_scale=scale,
             perspective_applied=apply_perspective,
-            augmentations=augs_applied,
+            augmentations=all_effects,
             bbox=bbox,
             random_seed=self.seed + variation_idx,
             generation_timestamp=datetime.now().isoformat(),
@@ -1423,7 +1721,7 @@ class SyntheticDataGenerator:
     
     def generate_dataset(
         self,
-        n_per_template: int = 100,
+        n_per_template: int = 250,
         include_hard_negatives: bool = True,
         hard_negative_ratio: float = 0.1,
         exhaustive_mode: bool = False
@@ -1470,8 +1768,18 @@ class SyntheticDataGenerator:
             "total_generated": 0,
             "rejected": 0,
             "hard_negatives": 0,
-            "per_category": {}
+            "per_category": {},
+            "per_distance_bucket": {"far": 0, "medium": 0, "near": 0}
         }
+        
+        # Build stratified bucket schedule
+        buckets = []
+        for bucket, cfg in DISTANCE_BUCKET_CONFIG.items():
+            count = int(n_per_template * cfg['weight'])
+            buckets.extend([bucket] * count)
+        # Fill remaining slots with medium
+        while len(buckets) < n_per_template:
+            buckets.append(DistanceBucket.MEDIUM)
         
         image_idx = 0
         
@@ -1488,11 +1796,19 @@ class SyntheticDataGenerator:
                     # Random sampling
                     targets = [random.choice(all_backgrounds) for _ in range(n_per_template)]
                 
+                # Shuffle bucket assignments for this template
+                template_buckets = buckets.copy()
+                random.shuffle(template_buckets)
+                
                 for var_idx, (bg_folder, bg_path) in enumerate(targets):
                     
-                    # Generate
+                    # Assign distance bucket for this variation
+                    bucket = template_buckets[var_idx % len(template_buckets)]
+                    
+                    # Generate with distance bucket
                     result = self.generate_single(
-                        template_path, bg_path, category, image_idx + var_idx
+                        template_path, bg_path, category, image_idx + var_idx,
+                        distance_bucket=bucket
                     )
                     
                     if result is None:
@@ -1511,6 +1827,7 @@ class SyntheticDataGenerator:
                     
                     metadata_dict = asdict(metadata)
                     metadata_dict["output_file"] = output_name
+                    metadata_dict["distance_bucket"] = bucket.value
                     # Convert tuples to lists for JSON serialization
                     if "sign_position" in metadata_dict:
                         metadata_dict["sign_position"] = list(metadata_dict["sign_position"])
@@ -1519,11 +1836,12 @@ class SyntheticDataGenerator:
                     self.metadata.append(metadata_dict)
                     
                     stats["total_generated"] += 1
+                    stats["per_distance_bucket"][bucket.value] += 1
                     category_count += 1
                     image_idx += 1
                     
                     if image_idx % 100 == 0:
-                        logger.info(f"Generated {image_idx} images...")
+                        logger.info(f"Generated {image_idx} images (Far: {stats['per_distance_bucket']['far']}, Med: {stats['per_distance_bucket']['medium']}, Near: {stats['per_distance_bucket']['near']})...")
             
             stats["per_category"][category] = category_count
         
@@ -1578,12 +1896,14 @@ if __name__ == "__main__":
                        help="Path to background images directory")
     parser.add_argument("--output", type=str, required=True,
                        help="Output directory for generated data")
-    parser.add_argument("--n-per-template", type=int, default=100,
-                       help="Number of variations per template")
+    parser.add_argument("--n-per-template", type=int, default=250,
+                       help="Number of variations per template (default: 250 for multi-scale)")
     parser.add_argument("--seed", type=int, default=42,
                        help="Random seed for reproducibility")
     parser.add_argument("--no-hard-negatives", action="store_true",
                        help="Disable hard negative generation")
+    parser.add_argument("--exhaustive-mode", action="store_true",
+                       help="Generate every template with every background")
     
     args = parser.parse_args()
     
@@ -1596,13 +1916,17 @@ if __name__ == "__main__":
     
     stats = generator.generate_dataset(
         n_per_template=args.n_per_template,
-        include_hard_negatives=not args.no_hard_negatives
+        include_hard_negatives=not args.no_hard_negatives,
+        exhaustive_mode=getattr(args, 'exhaustive_mode', False)
     )
     
     print("\n=== Generation Complete ===")
     print(f"Total images: {stats['total_generated']}")
     print(f"Rejected: {stats['rejected']}")
     print(f"Hard negatives: {stats['hard_negatives']}")
+    print("\nPer distance bucket:")
+    for bucket, count in stats.get('per_distance_bucket', {}).items():
+        print(f"  {bucket}: {count}")
     print("\nPer category:")
     for cat, count in stats['per_category'].items():
         print(f"  {cat}: {count}")
