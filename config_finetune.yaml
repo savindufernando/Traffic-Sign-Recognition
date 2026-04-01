@@ -1,0 +1,51 @@
+# Fine-Tuning Configuration — SEPARATE from config_sri_lanka.yaml
+# This file is used ONLY by scripts/finetune.py
+# The original config_sri_lanka.yaml is NEVER modified.
+
+# Base model to fine-tune FROM (read-only, never overwritten)
+base_model: "models_sri_lanka/best_model.pth"
+
+# Output model path (NEW file — does NOT overwrite the original)
+output_model: "models_sri_lanka/best_model_finetuned.pth"
+
+# Dataset paths
+dataset:
+  # Original synthetic data (read-only — used as 80% of training mix)
+  synthetic_path: "d:/APIIT/FYP/Traffic-Sign-Recognition/sri_lankan_traffc_signs/synthetic"
+  # Real dashcam crops (created by crop_sign_regions.py)
+  real_crops_path: "./dashcam_crops"
+  num_classes: 122
+  image_size: 224
+  # Mix ratio: what fraction of each batch is real data
+  real_data_ratio: 0.2
+
+# Model Architecture (must match the original model exactly)
+model:
+  backbone: "convnext_tiny"
+  backbone_pretrained: false  # Not needed — we load from checkpoint
+  transformer_layers: 2
+  transformer_heads: 8
+  transformer_dim: 384
+  dropout: 0.3
+  use_attention: true
+
+# Fine-Tuning Hyperparameters (conservative to preserve original knowledge)
+training:
+  batch_size: 16
+  epochs: 15                 # Short — only fine-tuning, not training from scratch
+  learning_rate: 1.0e-5      # 10x smaller than original (1e-4) to avoid catastrophic forgetting
+  weight_decay: 5.0e-4
+  warmup_epochs: 2
+  label_smoothing: 0.1
+  focal_loss_gamma: 2.0
+  use_amp: true
+  # Freeze backbone for first N epochs (only train classifier head)
+  freeze_backbone_epochs: 3
+
+# Paths (all NEW — never overwrites existing outputs)
+paths:
+  models_dir: "models_sri_lanka"
+  outputs_dir: "outputs_finetune"
+  logs_dir: "logs_finetune"
+
+seed: 42
