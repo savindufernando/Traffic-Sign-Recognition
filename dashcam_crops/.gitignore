@@ -1,0 +1,5 @@
+# Ignore generated / dataset contents in this directory.
+*
+
+# Keep this ignore file tracked.
+!.gitignore
