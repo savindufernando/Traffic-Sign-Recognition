@@ -129,7 +129,15 @@ class TrafficSignPredictor:
         if isinstance(image, Image.Image):
             image = np.array(image)
         
-        # Apply transforms
+        # ─── Night-Time/Low-Light Enhancement ─────────────────────────────
+        # If mean intensity is lower than 40 (~15%), boost it slightly
+        avg_intensity = np.mean(image)
+        if avg_intensity < 40:
+            # Shift pixel values up by the difference to reach a minimum baseline
+            boost = int(45 - avg_intensity)
+            image = np.clip(image.astype(np.int32) + boost, 0, 255).astype(np.uint8)
+        
+        # Apply transforms (now includes CLAHE as of recent update)
         transformed = self.transform(image=image)
         tensor = transformed['image']
         
