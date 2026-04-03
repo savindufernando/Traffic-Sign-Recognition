@@ -49,9 +49,13 @@ class PredictorService:
             print(f"❌ Failed to load model: {e}")
             raise e
     
-    def predict(self, image: Image.Image) -> Dict:
+    def predict(self, image: Image.Image, include_top_k: bool = False) -> Dict:
         """
         Predict traffic sign class from PIL Image.
+        
+        Args:
+            image: PIL Image to classify
+            include_top_k: If True, also compute top-k predictions (slower)
         
         Returns:
             dict with class_name, class_id, confidence, is_confident, top_k
@@ -62,16 +66,18 @@ class PredictorService:
         # Get prediction
         result = self._predictor.predict(image, return_all_probs=False)
         
-        # Get top-k predictions
-        top_k = self._predictor.get_top_k_predictions(image, k=5)
-        result['top_k'] = top_k
+        # Only compute top-k if explicitly requested (saves inference time)
+        if include_top_k:
+            top_k = self._predictor.get_top_k_predictions(image, k=5)
+            result['top_k'] = top_k
         
         return result
     
     def predict_from_bytes(self, image_bytes: bytes) -> Dict:
         """Predict from raw image bytes."""
         image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        return self.predict(image)
+        return self.predict(image, include_top_k=True)
+
     
     def get_classes(self) -> list:
         """Return list of all traffic sign classes."""
