@@ -155,6 +155,8 @@ def _get_albumentations_val_transforms(image_size: int = 224):
     """Get albumentations validation transforms."""
     return A.Compose([
         A.Resize(image_size, image_size),
+        # Add CLAHE for consistent contrast in various lighting (night/glare)
+        A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=1.0),
         A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ToTensorV2(),
     ])
