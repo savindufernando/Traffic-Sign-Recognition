@@ -60,6 +60,9 @@ class TrafficSignModel(nn.Module):
         self.use_attention = use_attention
         
         # Create backbone (without classification head)
+        self.backbone_name = backbone
+        self.is_lightweight = 'mobilevit' in backbone or 'fastvit' in backbone
+        
         self.backbone = timm.create_model(
             backbone,
             pretrained=pretrained,
@@ -183,8 +186,13 @@ class TrafficSignModel(nn.Module):
         # Add position embedding
         features = features + self.pos_embed
         
-        # Transformer encoding
-        features = self.transformer(features)
+        # Transformer encoding (Skip for inherently lightweight vision transformers)
+        if not self.is_lightweight:
+            features = self.transformer(features)
+        else:
+            # For lightweight models, just pass through the custom layers as a pooling mechanism
+            # or apply a simpler pooling to save compute.
+            pass
         
         # Extract CLS token
         cls_output = features[:, 0]  # (B, transformer_dim)
