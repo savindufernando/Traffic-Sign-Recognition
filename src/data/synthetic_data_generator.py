@@ -155,6 +155,8 @@ class ImageMetadata:
     bbox: Tuple[int, int, int, int]  # x, y, w, h
     random_seed: int
     generation_timestamp: str
+    degradation_score: float = 0.0  # 0 (perfect) to 1.0 (unreadable)
+    sri_lanka_context_score: float = 0.0 # 0 to 1.0 based on context realism
     is_hard_negative: bool = False
 
 
@@ -1445,7 +1447,15 @@ class SyntheticAugmentor:
             image = result['image']
             applied.append("albumentations_heavy")
                 
-        return image, applied
+        # Calculate overall degradation score
+        degradation = 0.0
+        if "motion_blur" in applied: degradation += 0.25
+        if "camera_shake" in applied: degradation += 0.15
+        if "foreground_occlusion" in applied: degradation += 0.3
+        if "monsoon_rain" in applied: degradation += 0.4
+        if "fog_haze" in applied: degradation += 0.2
+        
+        return image, applied, min(degradation, 1.0)
         
 
 
