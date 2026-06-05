@@ -1,0 +1,36 @@
+# Virtual Environments
+venv/
+venv311/
+env/
+.env
+
+# Cache and Logs
+__pycache__/
+.pytest_cache/
+*.log
+logs/
+logs_finetune/
+logs_sri_lanka/
+runs/
+outputs/
+outputs_finetune/
+outputs_sri_lanka/
+
+# Datasets and Large Media
+dashcam_frames/
+dashcam_crops/
+sri_lankan_traffc_signs/
+data/
+*.mp4
+*.avi
+*.png
+*.jpg
+*.jpeg
+
+# Git
+.git/
+.github/
+
+# IDE
+.vscode/
+.idea/

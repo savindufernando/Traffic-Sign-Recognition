@@ -9,7 +9,7 @@ dataset:
 
 # Model Architecture
 model:
-  backbone: "convnext_tiny"
+  backbone: "convnext_small"
   backbone_pretrained: true
   transformer_layers: 2
   transformer_heads: 8

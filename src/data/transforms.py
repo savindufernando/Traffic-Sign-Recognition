@@ -101,10 +101,10 @@ def _get_albumentations_train_transforms(
     return A.Compose([
         A.Resize(image_size, image_size),
         
-        # Motion blur
+        # Motion blur (vibrating dashcam)
         A.OneOf([
-            A.MotionBlur(blur_limit=(3, 7)),
-            A.GaussianBlur(blur_limit=(3, 5)),
+            A.MotionBlur(blur_limit=(5, 11)),
+            A.GaussianBlur(blur_limit=(3, 7)),
         ], p=motion_blur_prob),
         
         # Geometric transforms
@@ -112,7 +112,6 @@ def _get_albumentations_train_transforms(
             scale=(0.85, 1.15),
             rotate=(-15, 15),
             shear=(-10, 10),
-            mode=0,
             p=affine_prob
         ),
         
@@ -128,17 +127,17 @@ def _get_albumentations_train_transforms(
             A.RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15),
         ], p=0.3),
         
-        A.GaussNoise(var_limit=(5.0, 30.0), p=0.2),
-        
+        A.OneOf([
+            A.GaussNoise(),
+            A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5)),
+        ], p=0.3),
         # Real-world conditions for Sri Lankan roads
-        A.RandomRain(slant_lower=-10, slant_upper=10, drop_length=20,
-                     drop_width=1, blur_value=3, p=0.15),
-        A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, p=0.1),
+        A.RandomRain(drop_length=20, drop_width=1, blur_value=3, p=0.15),
+        A.RandomFog(p=0.1),
         A.RandomSunFlare(flare_roi=(0, 0, 1, 0.5), p=0.1),
         
         # Partial occlusion (tree branches, stickers, dirt)
-        A.CoarseDropout(max_holes=3, max_height=40, max_width=40,
-                        min_height=10, min_width=10, fill_value=0, p=0.2),
+        A.CoarseDropout(p=0.2),
         
         # Adaptive histogram equalization (poor lighting, shadows)
         A.CLAHE(clip_limit=4.0, tile_grid_size=(8, 8), p=0.2),

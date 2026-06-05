@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, SequentialLR, LinearLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LinearLR
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim.swa_utils import AveragedModel, SWALR
 from tqdm import tqdm
@@ -188,13 +188,13 @@ class Trainer:
                 weight_decay=self.weight_decay
             )
         
-        # Scheduler: Linear warmup → Cosine annealing with warm restarts
+        # Scheduler: Linear warmup → Cosine annealing (smooth decay)
         warmup_scheduler = LinearLR(
             self.optimizer, start_factor=0.01, end_factor=1.0,
             total_iters=self.warmup_epochs
         )
-        cosine_scheduler = CosineAnnealingWarmRestarts(
-            self.optimizer, T_0=10, T_mult=2, eta_min=1e-6
+        cosine_scheduler = CosineAnnealingLR(
+            self.optimizer, T_max=self.epochs - self.warmup_epochs, eta_min=1e-6
         )
         self.scheduler = SequentialLR(
             self.optimizer,
@@ -216,7 +216,7 @@ class Trainer:
             self.swa_start_epoch = self.epochs + 1  # Never triggers
         
         # Early stopping (monitors F1, more sensitive than accuracy at 99%+)
-        self.early_stopping = EarlyStopping(patience=15, min_delta=0.0005)
+        self.early_stopping = EarlyStopping(patience=20, min_delta=0.0005)
         
         # Paths
         paths_config = config.get('paths', {})
@@ -259,8 +259,8 @@ class Trainer:
             # Forward pass with optional Mixup augmentation
             self.optimizer.zero_grad()
             
-            # Mixup: blend samples 50% of the time for regularization
-            use_mixup = torch.rand(1).item() < 0.5
+            # Mixup: blend samples 80% of the time for heavy regularization
+            use_mixup = torch.rand(1).item() < 0.8
             if use_mixup:
                 lam = np.random.beta(0.2, 0.2)
                 rand_idx = torch.randperm(images.size(0)).to(self.device)

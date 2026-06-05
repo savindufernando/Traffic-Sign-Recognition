@@ -83,7 +83,11 @@ class PredictorService:
         """Return list of all traffic sign classes."""
         if self._predictor is None:
             return []
-        return list(self._predictor.class_names.values()) if hasattr(self._predictor, 'class_names') else []
+        if hasattr(self._predictor, 'class_names'):
+            if isinstance(self._predictor.class_names, dict):
+                return list(self._predictor.class_names.values())
+            return list(self._predictor.class_names)
+        return []
 
 
 # Global service instance

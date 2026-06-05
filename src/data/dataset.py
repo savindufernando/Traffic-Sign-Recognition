@@ -19,8 +19,8 @@ from .transforms import get_train_transforms, get_val_transforms
 
 
 # Traffic sign class names (GTSRB)
-# Default GTSRB classes (fallback)
-GTSRB_CLASSES = [
+# Default fallback classes if metadata not found
+DEFAULT_CLASSES = [
     "Speed limit (20km/h)", "Speed limit (30km/h)", "Speed limit (50km/h)",
     "Speed limit (60km/h)", "Speed limit (70km/h)", "Speed limit (80km/h)",
     "End of speed limit (80km/h)", "Speed limit (100km/h)", "Speed limit (120km/h)",
@@ -58,12 +58,12 @@ def load_class_names(data_dir: Path) -> List[str]:
         except Exception:
             pass
             
-    return GTSRB_CLASSES
+    return DEFAULT_CLASSES
 
 
-class GTSRBDataset(Dataset):
+class TrafficSignDataset(Dataset):
     """
-    GTSRB (German Traffic Sign Recognition Benchmark) Dataset.
+    Traffic Sign Recognition Dataset.
     
     Args:
         data_dir: Path to dataset root
@@ -104,6 +104,50 @@ class GTSRBDataset(Dataset):
         img_path = self.data_dir / self.image_paths[idx]
         image = Image.open(img_path).convert('RGB')
         image = np.array(image)
+        
+        # --- NEW: Hybrid Cropping Strategy ---
+        # Try OpenCV dynamic color masking first (perfect tight crops)
+        crop_success = False
+        try:
+            import cv2
+            blurred = cv2.GaussianBlur(image, (5, 5), 0)
+            hsv = cv2.cvtColor(blurred, cv2.COLOR_RGB2HSV)
+            mask1 = cv2.inRange(hsv, np.array([0, 70, 50]), np.array([10, 255, 255]))
+            mask2 = cv2.inRange(hsv, np.array([170, 70, 50]), np.array([180, 255, 255]))
+            mask3 = cv2.inRange(hsv, np.array([100, 100, 0]), np.array([140, 255, 255]))
+            mask4 = cv2.inRange(hsv, np.array([15, 100, 100]), np.array([35, 255, 255]))
+            
+            mask = mask1 | mask2 | mask3 | mask4
+            cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if cnts:
+                img_h, img_w = image.shape[:2]
+                for cnt in sorted(cnts, key=cv2.contourArea, reverse=True):
+                    area = cv2.contourArea(cnt)
+                    # A traffic sign shouldn't be larger than 15% of the dashcam frame area
+                    if 400 < area < (img_w * img_h * 0.15): 
+                        x, y, w, h = cv2.boundingRect(cnt)
+                        aspect_ratio = float(w) / h
+                        
+                        # Strict traffic sign shape constraints (0.5 to 2.0 aspect ratio)
+                        # Width and height must be less than 40% of the screen
+                        if 0.5 <= aspect_ratio <= 2.0 and w < img_w * 0.4 and h < img_h * 0.4:
+                            margin_x = int(w * 0.2)
+                            margin_y = int(h * 0.2)
+                            x1, y1 = max(0, x - margin_x), max(0, y - margin_y)
+                            x2, y2 = min(img_w, x + w + margin_x), min(img_h, y + h + margin_y)
+                            if x2 > x1 and y2 > y1:
+                                image = image[y1:y2, x1:x2]
+                                crop_success = True
+                                break
+        except Exception:
+            pass
+
+        # Fallback: If OpenCV fails to find the sign (e.g. too dark/foggy), we skip this image!
+        # Why? Because in production, the backend OpenCV engine won't pass missed ROIs to the model anyway.
+        # By resampling, we ensure the model strictly trains on valid traffic sign crops.
+        if not crop_success:
+            return self.__getitem__(np.random.randint(0, len(self)))
         
         # Get label
         label = int(self.labels[idx])
@@ -191,21 +235,21 @@ def get_dataloaders(
     val_transform = get_val_transforms(image_size=image_size)
     
     # Create datasets
-    train_dataset = GTSRBDataset(
+    train_dataset = TrafficSignDataset(
         data_dir=data_dir,
         csv_file=str(train_split_csv),
         transform=train_transform,
         is_train=True
     )
     
-    val_dataset = GTSRBDataset(
+    val_dataset = TrafficSignDataset(
         data_dir=data_dir,
         csv_file=str(val_split_csv),
         transform=val_transform,
         is_train=False
     )
     
-    test_dataset = GTSRBDataset(
+    test_dataset = TrafficSignDataset(
         data_dir=data_dir,
         csv_file=str(data_path / 'Test.csv'),
         transform=val_transform,

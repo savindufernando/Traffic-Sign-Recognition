@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
 
 from ..data.transforms import get_val_transforms, IMAGENET_MEAN, IMAGENET_STD
-from ..data.dataset import GTSRB_CLASSES
 from ..models.hybrid_model import TrafficSignModel, create_model
 
 
